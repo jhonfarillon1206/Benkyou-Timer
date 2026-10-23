@@ -40,3 +40,8 @@ export async function getActivitiesByDate(date) {
 export async function getRunningActivity() {
   return db.activities.where('status').equals('running').first()
 }
+
+export async function getAllSessions() {
+  const list = await db.sessions.toArray()
+  return list.sort((a, b) => b.startTs - a.startTs)
+}
