@@ -3,7 +3,7 @@ import { computed } from "vue";
 import { getRemainingMs, formatMs, STATUS } from "../lib/timer";
 
 const props = defineProps({ activity: Object, now: Number });
-defineEmits(["start", "pause", "stop", "reset"]);
+defineEmits(["start", "pause", "stop", "reset", "edit", "delete"]);
 
 const remaining = computed(() => getRemainingMs(props.activity, props.now));
 const progress = computed(
@@ -86,6 +86,16 @@ const badge = {
         @click="$emit('reset')"
       >
         Reset
+      </button>
+      <button
+        v-if="activity.status === 'idle'"
+        class="btn bg-slate-100 text-slate-700"
+        @click="$emit('edit')"
+      >
+        Edit
+      </button>
+      <button class="btn bg-slate-100 text-rose-600" @click="$emit('delete')">
+        Delete
       </button>
     </div>
   </div>

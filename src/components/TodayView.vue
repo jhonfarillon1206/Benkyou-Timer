@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import {
   createActivity,
   start,
@@ -7,12 +7,19 @@ import {
   stop,
   reset,
   sync,
+  updateDetails,
   getStudiedMs,
   formatMs,
   STATUS,
 } from "../lib/timer";
-import { saveActivity, getActivitiesByDate } from "../db";
-import { todayStr } from "../lib/date";
+import {
+  saveActivity,
+  deleteActivity,
+  getActivitiesByDate,
+  getRunningActivity,
+  recordSession,
+} from "../db";
+import { todayStr, addDays } from "../lib/date";
 import ActivityCard from "./ActivityCard.vue";
 
 const SUBJECTS = [
@@ -25,16 +32,23 @@ const SUBJECTS = [
 ];
 const DAILY_GOAL_MIN = 120; // moves to settings later
 
-const date = todayStr();
+const date = ref(todayStr());
 const activities = ref([]);
 const now = ref(Date.now());
 const ready = ref(false);
 let tick = null;
 
-// add form
+// form (used for both add and edit)
 const subject = ref(SUBJECTS[0]);
 const title = ref("");
 const minutes = ref(60);
+const editingId = ref(null);
+
+const isToday = computed(() => date.value === todayStr());
+
+async function load() {
+  activities.value = await getActivitiesByDate(date.value);
+}
 
 // Recalculate from the real clock. Completes any timer that ran out.
 function refresh() {
@@ -45,6 +59,7 @@ function refresh() {
     if (s !== a) {
       changed = true;
       saveActivity(s);
+      recordSession(s);
     }
     return s;
   });
@@ -52,7 +67,7 @@ function refresh() {
 }
 
 onMounted(async () => {
-  activities.value = await getActivitiesByDate(date);
+  await load();
   ready.value = true;
   refresh();
   tick = setInterval(refresh, 250);
@@ -66,36 +81,94 @@ onUnmounted(() => {
   window.removeEventListener("focus", refresh);
 });
 
+watch(date, () => {
+  cancelEdit();
+  load();
+});
+
 async function update(a) {
   activities.value = activities.value.map((x) => (x.id === a.id ? a : x));
   await saveActivity(a);
 }
 
-async function add() {
+function resetForm() {
+  title.value = "";
+  minutes.value = 60;
+  subject.value = SUBJECTS[0];
+}
+
+function cancelEdit() {
+  editingId.value = null;
+  resetForm();
+}
+
+async function submit() {
   const mins = Number(minutes.value);
   if (!mins || mins < 1) return;
+
+  if (editingId.value) {
+    const a = activities.value.find((x) => x.id === editingId.value);
+    if (a) {
+      await update(
+        updateDetails(a, {
+          subject: subject.value,
+          title: title.value.trim() || subject.value,
+          targetMin: mins,
+        })
+      );
+    }
+    cancelEdit();
+    return;
+  }
+
   const a = createActivity({
     subject: subject.value,
     title: title.value.trim() || subject.value,
-    date,
+    date: date.value,
     targetMin: mins,
   });
   activities.value = [...activities.value, a];
   await saveActivity(a);
-  title.value = "";
+  resetForm();
 }
 
-// Only one timer runs at a time: starting one pauses the other.
+function onEdit(a) {
+  editingId.value = a.id;
+  subject.value = a.subject;
+  title.value = a.title;
+  minutes.value = Math.round(a.targetMs / 60000);
+}
+
+async function onDelete(a) {
+  if (!confirm(`Delete "${a.title}"?`)) return;
+  if (editingId.value === a.id) cancelEdit();
+  activities.value = activities.value.filter((x) => x.id !== a.id);
+  await deleteActivity(a.id);
+}
+
+// Only one timer runs at a time, across all dates: starting one pauses the other.
 async function onStart(a) {
-  const running = activities.value.find(
-    (x) => x.status === STATUS.RUNNING && x.id !== a.id
-  );
-  if (running) await update(pause(running, Date.now()));
-  await update(start(a, Date.now()));
+  const t = Date.now();
+  const running = await getRunningActivity();
+  if (running && running.id !== a.id) {
+    const paused = pause(running, t);
+    await saveActivity(paused);
+    activities.value = activities.value.map((x) =>
+      x.id === paused.id ? paused : x
+    );
+  }
+  await update(start(a, t));
 }
 const onPause = (a) => update(pause(a, Date.now()));
-const onStop = (a) => update(stop(a, Date.now()));
-const onReset = (a) => update(reset(a));
+const onStop = async (a) => {
+  const s = stop(a, Date.now());
+  await recordSession(s);
+  await update(s);
+};
+const onReset = async (a) => {
+  if (a.status === "paused") await recordSession({ ...a, endedAt: Date.now() });
+  await update(reset(a));
+};
 
 const ongoing = computed(() =>
   activities.value.filter(
@@ -121,15 +194,43 @@ const goalPct = computed(() =>
 
 <template>
   <div v-if="ready" class="space-y-6">
-    <header>
-      <h1 class="text-2xl font-bold">Today</h1>
-      <p class="text-sm text-slate-500">{{ date }}</p>
+    <header class="flex flex-wrap items-center justify-between gap-2">
+      <div>
+        <h1 class="text-2xl font-bold">{{ isToday ? "Today" : "Schedule" }}</h1>
+        <p class="text-sm text-slate-500">{{ date }}</p>
+      </div>
+      <div class="flex items-center gap-1">
+        <button
+          class="rounded-lg bg-white border border-slate-300 px-3 py-1.5 text-sm"
+          @click="date = addDays(date, -1)"
+        >
+          ‹
+        </button>
+        <input
+          v-model="date"
+          type="date"
+          class="rounded-lg border border-slate-300 bg-white p-1.5 text-sm"
+        />
+        <button
+          class="rounded-lg bg-white border border-slate-300 px-3 py-1.5 text-sm"
+          @click="date = addDays(date, 1)"
+        >
+          ›
+        </button>
+        <button
+          v-if="!isToday"
+          class="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm text-white"
+          @click="date = todayStr()"
+        >
+          Today
+        </button>
+      </div>
     </header>
 
     <section class="rounded-xl bg-white p-4 shadow-sm border border-slate-200">
       <div class="flex justify-between text-sm">
         <span
-          >Studied today: <b>{{ formatMs(studiedMs) }}</b></span
+          >Studied: <b>{{ formatMs(studiedMs) }}</b></span
         >
         <span class="text-slate-500">Goal: {{ DAILY_GOAL_MIN }} min</span>
       </div>
@@ -142,7 +243,13 @@ const goalPct = computed(() =>
     </section>
 
     <section class="rounded-xl bg-white p-4 shadow-sm border border-slate-200">
-      <form class="grid grid-cols-1 gap-2 sm:grid-cols-4" @submit.prevent="add">
+      <div v-if="editingId" class="mb-2 text-sm font-medium text-indigo-600">
+        Editing activity
+      </div>
+      <form
+        class="grid grid-cols-1 gap-2 sm:grid-cols-4"
+        @submit.prevent="submit"
+      >
         <select
           v-model="subject"
           class="rounded-lg border border-slate-300 p-2 text-sm"
@@ -161,11 +268,21 @@ const goalPct = computed(() =>
           placeholder="Minutes"
           class="rounded-lg border border-slate-300 p-2 text-sm"
         />
-        <button
-          class="rounded-lg bg-indigo-600 p-2 text-sm font-medium text-white"
-        >
-          + Add
-        </button>
+        <div class="flex gap-2">
+          <button
+            class="flex-1 rounded-lg bg-indigo-600 p-2 text-sm font-medium text-white"
+          >
+            {{ editingId ? "Save" : "+ Add" }}
+          </button>
+          <button
+            v-if="editingId"
+            type="button"
+            class="rounded-lg bg-slate-100 px-3 text-sm"
+            @click="cancelEdit"
+          >
+            Cancel
+          </button>
+        </div>
       </form>
     </section>
 
@@ -180,6 +297,8 @@ const goalPct = computed(() =>
         @pause="onPause(a)"
         @stop="onStop(a)"
         @reset="onReset(a)"
+        @edit="onEdit(a)"
+        @delete="onDelete(a)"
       />
     </section>
 
@@ -194,6 +313,8 @@ const goalPct = computed(() =>
         @pause="onPause(a)"
         @stop="onStop(a)"
         @reset="onReset(a)"
+        @edit="onEdit(a)"
+        @delete="onDelete(a)"
       />
     </section>
 
@@ -208,11 +329,13 @@ const goalPct = computed(() =>
         @pause="onPause(a)"
         @stop="onStop(a)"
         @reset="onReset(a)"
+        @edit="onEdit(a)"
+        @delete="onDelete(a)"
       />
     </section>
 
     <p v-if="!activities.length" class="text-center text-sm text-slate-500">
-      No activities yet. Add one above.
+      No activities for this date. Add one above.
     </p>
   </div>
 </template>

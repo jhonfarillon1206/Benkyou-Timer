@@ -1,7 +1,14 @@
 import Dexie from 'dexie'
-import { sync } from './lib/timer'
+import { sync, toSession } from './lib/timer'
 
 export const db = new Dexie('study-tracker')
+
+export async function recordSession(a, now = Date.now()) {
+  if (!a.sessionStart) return
+  const s = toSession(a, now)
+  if (s.studiedMs <= 0) return
+  await db.sessions.put(s)
+}
 
 db.version(1).stores({
   activities: 'id, date, status',
@@ -23,7 +30,10 @@ export async function getActivitiesByDate(date) {
   const list = await db.activities.where('date').equals(date).toArray()
   const synced = list.map((a) => sync(a))
   const changed = synced.filter((a, i) => a !== list[i])
-  if (changed.length) await db.activities.bulkPut(changed)
+   if (changed.length) {
+    await db.activities.bulkPut(changed)
+    for (const a of changed) await recordSession(a)
+  }
   return synced
 }
 

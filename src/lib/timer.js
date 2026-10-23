@@ -1,3 +1,5 @@
+import { todayStr } from './date.js'
+
 export const STATUS = {
   IDLE: 'idle',
   RUNNING: 'running',
@@ -104,4 +106,27 @@ export function formatMs(ms) {
   const s = total % 60
   const pad = (n) => String(n).padStart(2, '0')
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`
+}
+
+// Only allowed while idle, since changing the target mid-session would corrupt the timer.
+export function updateDetails(a, { subject, title, targetMin }) {
+  if (a.status !== STATUS.IDLE) return a
+  const targetMs = targetMin * 60 * 1000
+  return { ...a, subject, title, targetMs, remainingMs: targetMs }
+}
+
+// Builds the history record for a finished or interrupted run.
+export function toSession(a, now = Date.now()) {
+  return {
+    id: `${a.id}-${a.sessionStart}`,
+    activityId: a.id,
+    subject: a.subject,
+    title: a.title,
+    date: todayStr(new Date(a.sessionStart)), // the day it was studied
+    startTs: a.sessionStart,
+    endTs: a.endedAt ?? now,
+    studiedMs: getStudiedMs(a, now),
+    pauseCount: a.pauseCount,
+    outcome: a.status === STATUS.COMPLETED ? 'completed' : 'interrupted',
+  }
 }
