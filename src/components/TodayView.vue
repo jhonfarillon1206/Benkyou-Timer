@@ -20,6 +20,7 @@ import {
   recordSession,
 } from "../db";
 import { todayStr, addDays } from "../lib/date";
+import { dailyGoalMin, setDailyGoal } from "../lib/settings";
 import ActivityCard from "./ActivityCard.vue";
 
 const SUBJECTS = [
@@ -30,7 +31,17 @@ const SUBJECTS = [
   "Speaking Practice",
   "Listening",
 ];
-const DAILY_GOAL_MIN = 120; // moves to settings later
+
+const editingGoal = ref(false);
+const goalInput = ref(120);
+function startGoalEdit() {
+  goalInput.value = dailyGoalMin.value;
+  editingGoal.value = true;
+}
+async function saveGoal() {
+  await setDailyGoal(goalInput.value);
+  editingGoal.value = false;
+}
 
 const date = ref(todayStr());
 const activities = ref([]);
@@ -188,7 +199,7 @@ const studiedMs = computed(() =>
   activities.value.reduce((sum, a) => sum + getStudiedMs(a, now.value), 0)
 );
 const goalPct = computed(() =>
-  Math.min(100, (studiedMs.value / (DAILY_GOAL_MIN * 60000)) * 100)
+  Math.min(100, (studiedMs.value / (dailyGoalMin.value * 60000)) * 100)
 );
 </script>
 
@@ -232,7 +243,36 @@ const goalPct = computed(() =>
         <span
           >Studied: <b>{{ formatMs(studiedMs) }}</b></span
         >
-        <span class="text-slate-500">Goal: {{ DAILY_GOAL_MIN }} min</span>
+        <form
+          v-if="editingGoal"
+          class="flex items-center gap-1"
+          @submit.prevent="saveGoal"
+        >
+          <input
+            v-model="goalInput"
+            type="number"
+            min="1"
+            class="w-20 rounded border border-slate-300 p-1 text-sm"
+          />
+          <span class="text-slate-500">min</span>
+          <button class="rounded bg-indigo-600 px-2 py-1 text-xs text-white">
+            Save
+          </button>
+          <button
+            type="button"
+            class="rounded bg-slate-100 px-2 py-1 text-xs"
+            @click="editingGoal = false"
+          >
+            ×
+          </button>
+        </form>
+        <button
+          v-else
+          class="text-slate-500 hover:text-indigo-600"
+          @click="startGoalEdit"
+        >
+          Goal: {{ dailyGoalMin }} min ✎
+        </button>
       </div>
       <div class="mt-2 h-2 w-full rounded-full bg-slate-100">
         <div

@@ -2,8 +2,8 @@
 import { ref, computed, onMounted } from "vue";
 import { getAllSessions } from "../db";
 import { todayStr, addDays } from "../lib/date";
+import { dailyGoalMin } from "../lib/settings";
 
-const DAILY_GOAL_MIN = 120; // keep in sync with TodayView
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const sessions = ref([]);
@@ -62,7 +62,7 @@ const allTotal = computed(() =>
 );
 
 const dayScale = computed(() =>
-  Math.max(DAILY_GOAL_MIN * 60000, ...days.value.map((d) => d.ms))
+  Math.max(dailyGoalMin.value * 60000, ...days.value.map((d) => d.ms))
 );
 
 const subjects = computed(() => {
@@ -153,7 +153,7 @@ function time(ts) {
         </div>
       </div>
       <p class="mt-2 text-xs text-slate-400">
-        Bar scale: daily goal of {{ DAILY_GOAL_MIN }} min
+        Bar scale: daily goal of {{ dailyGoalMin }} min
       </p>
     </section>
 
